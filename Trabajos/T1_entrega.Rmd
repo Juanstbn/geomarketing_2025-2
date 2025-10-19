@@ -43,9 +43,7 @@ El enfoque metodológico tuvo como propósito calcular y representar indicadores
 
 1.  **Indicador de Viviendas con Materialidad Precaria (IVMP)**:  Porcentaje de viviendas ocupadas con materiales estructurales precarios, reflejando la calidad constructiva y las condiciones habitacionales de un territorio.
 
-```         
-Se considera “material precario” cuando los muros, techos o pisos están construidos con materiales de baja durabilidad o inadecuados.
-```
+<!-- -->
 
 2.  **Porcentaje de mayores de 18 años con educación media completa o superior**: representa el porcentaje de personas adultas (P09 \> 18 años) que han alcanzado al menos el nivel de educación media completa o superior (P15 ≥ 7).
 
@@ -94,8 +92,7 @@ Variables consideradas:
 
 *Ámbito personas:*
 
--   P09
-    — Edad (en años). Aquí se considera población adulta: P09 \> 18.
+-   P09 — Edad (en años). Aquí se considera población adulta: P09 \> 18.
 
 -   P15 — Nivel educacional alcanzado. Se usa P15 ≥ 7 = educación media completa o superior.
 
@@ -206,7 +203,7 @@ La visualización se estructuró en tres etapas:
 
 Este mapa muestra la distribución espacial del índice de viviendas con materialidad precaria (IVMP).
 
-```{r IVMP (%) — Materialidad precaria de la vivienda, echo=TRUE, message=FALSE, warning=FALSE}
+```{r IVMP  Materialidad precaria de la vivienda, echo=TRUE, message=FALSE, warning=FALSE}
 map_ivmp <- ggplot(sf_mapa) +
   geom_sf(aes(fill = ivmp), color = 'gray85', size = 0.2) +
   scale_fill_distiller(palette = 'Reds', direction = 1) +
@@ -226,7 +223,7 @@ En resumen, se evidencia un patrón territorial desigual: los sectores costeros 
 
 El mapa educativo evidencia el porcentaje de adultos con al menos enseñanza media completa o superior.
 
-```{r Educación ≥ media completa (%) — Población mayor de 18 años, echo=TRUE, message=FALSE, warning=FALSE}
+```{r Educación ≥ media completa   Población mayor de 18 años, echo=TRUE, message=FALSE, warning=FALSE}
 map_edu <- ggplot(sf_mapa) +
   geom_sf(aes(fill = edu_alta), color = 'gray85', size = 0.2) +
   scale_fill_distiller(palette = 'Blues', direction = 1) +
@@ -246,7 +243,7 @@ En resumen, se evidencia una brecha entre costa e interior. Las zonas con más d
 
 El gráfico de dispersión permite visualizar la relación estadística entre precariedad habitacional y educación a nivel de zona censal.
 
-```{r Dispersión: IVMP vs Educación ≥ media (%), echo=TRUE, message=FALSE, warning=FALSE}
+```{r Dispersión: IVMP vs Educación ≥ media, echo=TRUE, message=FALSE, warning=FALSE}
 mediana_ivmp <- median(sf_mapa$ivmp, na.rm = TRUE)
 mediana_edu  <- median(sf_mapa$edu_alta, na.rm = TRUE)
 
