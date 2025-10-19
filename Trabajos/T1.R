@@ -23,7 +23,7 @@ con <- dbConnect(
 # =============================================================================
 # 3) CONSULTA SQL: IVMP Y NIVEL EDUCACIONAL (MAYORES DE 18 AÑOS)
 # =============================================================================
-# Ajuste: se filtran solo personas con P09 > 18 años en el cálculo educativo
+#  filtran solo personas con P09 > 18 años en el cálculo educativo
 
 sql_indicadores <- "
 WITH agg AS (
