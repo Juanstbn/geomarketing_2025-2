@@ -1,0 +1,63 @@
+---
+title: "Índice de Viviendas con Materialidad Precaria (IVMP) vs Nivel Educacional — Provincia de San Antonio"
+author: "Juan Esteban Rodrigo Gallardo Palma"
+date: "`r Sys.Date()"
+output: html_document
+---
+
+# 1. Introducción
+
+La provincia de San Antonio, ubicada en la Región de Valparaíso, constituye un territorio donde convergen funciones portuarias, turísticas, residenciales y rurales. Está conformada por seis comunas San Antonio, Cartagena, El Tabo, El Quisco, Algarrobo y Santo Domingo, que presentan marcadas diferencias en su grado de urbanización, consolidación habitacional y desarrollo socioeconómico.
+
+## 1.1. Objetivo General
+
+## 1.2. Objetivo Específicos
+
+------------------------------------------------------------------------
+
+# 2. Desarrollo
+
+## 2.1. Metodología
+
+### 2.1.1. Librerías necesarias
+
+```{r librería, echo=TRUE, message=FALSE, warning=FALSE}
+library(DBI)
+library(RPostgres)
+library(sf)
+library(ggplot2)
+library(cowplot)
+library(biscale)
+
+```
+
+### 2.1.2. Conexión a la base de datos PostgresSQL
+
+```{r conexión, echo=TRUE, message=FALSE, warning=FALSE}
+con <- dbConnect(
+  Postgres(),
+  dbname   = "censo_v_2017",
+  host     = "localhost",
+  port     = 5432,
+  user     = "postgres",
+  password = "postgres"
+)
+```
+
+### 2.1.3. Indicadores
+
+### 2.1.4. Visualización
+
+```{r}
+
+```
+
+## 2.2. Resultados y análisis
+
+------------------------------------------------------------------------
+
+# 3. Conclusión
+
+------------------------------------------------------------------------
+
+# 4. Bibliografía 
