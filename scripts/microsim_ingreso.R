@@ -2,6 +2,7 @@
 library(rakeR)
 library(RPostgres)
 library(DBI)
+library (SF)
 
 ## 2. Entradas ####
 
@@ -166,3 +167,8 @@ zonas_ypc = aggregate(
   FUN  = function(x) median(x, na.rm = TRUE)
 )
 names(zonas_ypc) <- c("geocodigo", "mediana_ingreso")
+
+
+
+## 5.Conexión a BD ####
+
