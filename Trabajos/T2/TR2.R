@@ -171,7 +171,7 @@ con = dbConnect(
 
 dbWriteTable(
   con,
-  name = DBI::SQL("output.zonas_diabet"),
+  name = DBI::SQL("output.zonas_diabetes"),
   value = zonas_diabetes,
   row.names = FALSE
 )
