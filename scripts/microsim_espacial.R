@@ -2,6 +2,8 @@
 library(rakeR)
 library(RPostgres)
 library(DBI)
+library(sf)
+library(dplyr)
 
 ## 2. Entradas ####
 
@@ -12,7 +14,6 @@ ruta_censo = "data/cons_censo_df.rds"
 # DF's de CASEN y CENSO
 casen_raw = readRDS(ruta_casen)
 cons_censo_df = readRDS(ruta_censo)
-
 
 
 ## 3. PRE-PROCESAMIENTO ####
@@ -90,23 +91,22 @@ pred = predict(fit, newdata = casen[idx_na, ,drop = FALSE])
 casen$esc[idx_na] = as.integer(round(pmax(0, pmin(29, pred))))
 
 
-#añadimos a un ID unico
+# Añadimos a un ID único
 casen$ID = as.character(seq_len(nrow(casen)))
 
 
-### 3.3 RE-CODIFICACION
+### 3.3 RE-CODIFICACIÓN
 
-#Categorizacion de edad
+# Categorización de edad
 casen$edad_cat = cut(
   casen$edad,
   breaks = c(0,30,40,50,60,70,80,Inf),
-  labels= age_levels,
-  right= FALSE, include.lowest= TRUE
+  labels = age_levels,
+  right = FALSE, include.lowest = TRUE
 )
 
 
-
-#categorizacion de escolaridad
+# Categorización de Escolaridad
 casen$esc_cat = factor(
   with(casen,
        ifelse(esc == 0, esc_levels[1],
@@ -124,6 +124,8 @@ casen$sexo_cat = factor(
   levels = sexo_levels
 )
 
+
+
 ## 4. MICROSIMULACIÓN ####
 
 # crear la lista de constraints POR COMUNA
@@ -132,6 +134,8 @@ cons_censo_comunas = split(cons_censo_df, cons_censo_df$COMUNA)
 # Lista de INDS 
 inds_list = split(casen, casen$Comuna)
 
+
+# ESTO SE DEMORA MÁS 
 sim_list = lapply(names(cons_censo_comunas), function(zona) {
   cons_i    = cons_censo_comunas[[zona]]
   col_order = sort(setdiff(names(cons_i), c("COMUNA","GEOCODIGO")))
@@ -154,6 +158,7 @@ sim_list = lapply(names(cons_censo_comunas), function(zona) {
 # Data Frame de toda la población
 sim_df = data.table::rbindlist(sim_list, idcol = "COMUNA")
 
+
 # Se agregan los datos
 zonas_ypc = aggregate(
   ypc ~ zone,
@@ -161,3 +166,63 @@ zonas_ypc = aggregate(
   FUN  = function(x) median(x, na.rm = TRUE)
 )
 names(zonas_ypc) <- c("geocodigo", "mediana_ingreso")
+
+
+
+## 5. Conexión a BD ####
+
+db_host = "localhost"
+db_port = 5432
+db_name = "censo_rm_clases"
+db_user = "postgres"
+db_password = "postgres"
+
+# Conexión
+con = dbConnect(
+  Postgres(),
+  dbname   = db_name,
+  host     = db_host,
+  port     = db_port,
+  user     = db_user,
+  password = db_password
+)
+
+
+# Escribimos la tabla dentro de la BD
+
+dbWriteTable(
+  con,
+  name = DBI::SQL("output.zonas_ypc_tmp"),
+  value = zonas_ypc,
+  row.names = FALSE
+)
+
+
+# Leer zonas censales a partir de la bd
+
+query_gs = "
+SELECT *
+FROM dpa.zonas_censales_rm
+WHERE urbano = 1 AND (
+    nom_provin = 'SANTIAGO' OR
+    nom_comuna IN ('PUENTE ALTO', 'SAN BERNARDO')
+)"
+
+zonas_gs = st_read(con, query = query_gs)
+
+
+# Se cambia el tipo de dato de la columna de geocodigo
+zonas_gs$geocodigo = as.character(zonas_gs$geocodigo)
+
+# Unir por geocódigo
+zonas_gs_ingreso = left_join(zonas_gs, zonas_ypc, by = "geocodigo")
+
+
+# Escribir tabla espacial
+
+st_write(
+  zonas_gs_ingreso,
+  dsn = con,
+  layer = DBI::SQL("output.zc_ingreso_microsim",
+                   driver = "PostreSQL")
+)
