@@ -8,8 +8,7 @@ library(DBI)
 library(dplyr)
 library(sf)
 library(ggplot2)
-library(cowplot)
-library(biscale)
+
 
 ## =========================================================
 ## 2. Entradas ####
@@ -17,8 +16,8 @@ library(biscale)
 
 # casen en formato .rds
 
-ruta_casen = "data/casen_rm.rds"
-ruta_censo = "data/cons_censo_df.rds"
+ruta_casen = "../../data/casen_rm.rds"
+ruta_censo = "../../data/cons_censo_df.rds"
 
 casen_raw = readRDS(ruta_casen)
 cons_censo_df = readRDS(ruta_censo)
