@@ -2,7 +2,7 @@
 library(rakeR)
 library(RPostgres)
 library(DBI)
-library (SF)
+library (sf)
 
 ## 2. Entradas ####
 
