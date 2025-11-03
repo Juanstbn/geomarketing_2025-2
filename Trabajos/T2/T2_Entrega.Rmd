@@ -53,8 +53,8 @@ El análisis utiliza dos fuentes complementarias: CASEN 2022 (Región Metropolit
 ```{r Entrada, echo=TRUE, message=FALSE, warning=FALSE}
 # casen en formato .rds
 
-ruta_casen = "data/casen_rm.rds"
-ruta_censo = "data/cons_censo_df.rds"
+ruta_casen = "../../data/casen_rm.rds"
+ruta_censo = "../../data/cons_censo_df.rds"
 
 casen_raw = readRDS(ruta_casen)
 cons_censo_df = readRDS(ruta_censo)
@@ -238,7 +238,7 @@ La tabla resultante (zonas_diabetes) se inserta en el esquema output, y luego se
 
 dbWriteTable(
   con,
-  name = DBI::SQL("output.zonas_diabe"),
+  name = DBI::SQL("output.zonas_diabete"),
   value = zonas_diabetes,
   row.names = FALSE
 )
