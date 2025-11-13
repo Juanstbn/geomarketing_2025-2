@@ -16,8 +16,8 @@ library(ggplot2)
 
 # casen en formato .rds
 
-ruta_casen = "../../data/casen_rm.rds"
-ruta_censo = "../../data/cons_censo_df.rds"
+ruta_casen = "data/casen_rm.rds"
+ruta_censo = "data/cons_censo_df.rds"
 
 casen_raw = readRDS(ruta_casen)
 cons_censo_df = readRDS(ruta_censo)
@@ -193,6 +193,15 @@ zonas_gs$geocodigo = as.character(zonas_gs$geocodigo)
 
 # Unir por geocódigo
 zonas_gs_diabetes = left_join(zonas_gs, zonas_diabetes, by = "geocodigo")
+
+# Escribir tabla espacial
+
+st_write(
+  zonas_gs_diabetes,
+  dsn = con,
+  layer = DBI::SQL("output.zc_diabetes_microsim",
+   delete_layer= TRUE)
+)
 
 # =============================================================================
 # 6) MAPAS 
