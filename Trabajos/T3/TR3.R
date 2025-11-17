@@ -297,3 +297,39 @@ mapa_clusters = ggplot() +
   )
 
 print(mapa_clusters)
+
+#Mapa variabilidad intra-comunal
+# Calcular indice de Shannon por comuna
+shannon_df <- zonas_gs_diabetes %>%
+  st_drop_geometry() %>%
+  filter(!is.na(cluster)) %>%   # asegurarse que no haya NA
+  group_by(nom_comuna, cluster) %>%
+  summarise(n = n(), .groups = "drop_last") %>%
+  mutate(p = n / sum(n),
+         H = -p * log(p)) %>%
+  summarise(shannon = sum(H), .groups = "drop")  # índice final
+
+# Crear sf comunal uniendo zonas
+sf_comunas_santiago <- zonas_gs %>%
+  group_by(nom_comuna) %>%
+  summarise(geometry = st_union(geom))
+
+sf_comunas_shannon <- sf_comunas_santiago %>%
+  left_join(shannon_df, by = "nom_comuna")
+
+ggplot(sf_comunas_shannon) +
+  geom_sf(aes(fill = shannon), color = "white", size = 0.3) +
+  scale_fill_viridis_c(option = "plasma", direction = -1,
+                       name = "Índice de Shannon") +
+  labs(
+    title = "Variabilidad Intracomunal de Clusters",
+    subtitle = "Índice de Shannon aplicado a zonas censales",
+    caption = "Fuente: Microsimulación CASEN + CENSO 2017"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5),
+    legend.position = "right"
+  )
+

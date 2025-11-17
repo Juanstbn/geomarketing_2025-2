@@ -24,7 +24,7 @@ Identificar y caracterizar grupos de zonas censales del Gran Santiago mediante t
 
 -   Analizar e interpretar los perfiles de cada cluster, identificando diferencias en términos de ingreso, nivel educativo y prevalencia de diabetes, y plantear sus implicancias en el contexto urbano y social del Gran Santiago.
 
-    \# 2. Desarrollo
+# 2. Desarrollo
 
 ## 2.1 Metodología
 
@@ -47,8 +47,6 @@ library(ggplot2)
 library(data.table)
 library(factoextra)
 ```
-
-as
 
 ### 2.1.2 Microsimulación de datos "prevalencia de diabetes"
 
@@ -194,8 +192,6 @@ dbWriteTable(
 )
 ```
 
-as
-
 ### 2.1.4 Unión con zonas censales y exportación espacial}
 
 Se consulta la base de PostGIS para extraer las geometrías de las zonas censales del Gran Santiago, se convierte el geocódigo a formato texto, estas geometrías se unen con los indicadores, generando una capa espacial donde cada zona censal contiene la información de los indicadores. El resultado se exporta a la base para utilizarlo mas adelante.
@@ -255,8 +251,6 @@ vars_scaled <- scale(vars_clusters_valid[, c("prev_diabetes_pct", "promedio_esco
 
 ```
 
-as
-
 ### 2.1.6 Análisis de agrupamiento K-Means (Método del Codo)
 
 Aquí se determina el número óptimo de clusters utilizando el método del codo y luego se aplica el algoritmo K-Means con k = 3, en la grafica se ve que se genera un “codo” claro que indica un punto de equilibrio entre complejidad del modelo y capacidad explicativa. Por esta razón se seleccionó k = 3 clusters, lo cual permite diferenciar adecuadamente tres perfiles territoriales sin sobresegmentar la información.
@@ -289,7 +283,7 @@ Los clusters obtenidos se asignan nuevamente a cada zona censal mediante el ID c
 
 ## 2.2 Resultados y Análisis
 
-### Prevalencia de Diabetes vs Escolaridad Promedio
+### 2.2.1 Prevalencia de Diabetes vs Escolaridad Promedio
 
 Este gráfico muestra la relación entre la prevalencia de diabetes y el promedio de escolaridad de las personas mayores de 18 años en cada zona censal del Gran Santiago, contamos con los siguientes:
 
@@ -318,7 +312,7 @@ Patrones observados:
 
 De forma general, se observa una relación inversa entre nivel educativo y prevalencia de diabetes (a menor nivel educativo, mayor la prevalencia de diabetes). Este patrón valida la selección de este indicador como una de las explicativas para este análisis.
 
-### Prevalencia de Diabetes vs Ingreso Promedio
+### 2.2.2 Prevalencia de Diabetes vs Ingreso Promedio
 
 En esta visualización se presenta la relación entre ingreso promedio según datos de la CASEN y la prevalencia de diabetes.
 
@@ -360,7 +354,7 @@ Se observan los siguientes patrones:
 
 El patrón refuerza la relación socioeconómica de la enfermedad, pero si bien el ingreso promedio es una variable importante, como tal no es suficiente por sí solo para explicar la prevalencia de diabetes, por ellos, dos zonas con ingreso igualmente bajos pueden pertenecer a clusters distintos, como el caso del cluster 2 y 3. Esta heterogeneidad evidencia la importancia de combinar variables socioeconómicas.
 
-### Mapa de Clusters del Gran Santiago
+### 2.2.3 Mapa de Clusters del Gran Santiago
 
 El mapa permite observar la distribución territorial de los clusters identificados, revelando patrones espaciales coherentes con la estructura socioeconómica del Gran Santiago.
 
@@ -436,6 +430,57 @@ Algunas zonas de transición entre sectores altos y vulnerables, tiene indicador
 El mapa de forma general muestra una segregación sanitaria asociada a la estructura socioeconómica histórica del Gran Santiago.
 
 El sector norte- oriente presenta menor prevalencia de diabetes, mientras que al sur y poniente concentran los valores más altos.
+
+### 2.2.4 Mapa variabilidad intra-comunal (índice de Shannon)
+
+El mapa muestra la distribución del índice de diversidad de Shannon que es aplicado a los clusters de las zonas censales dentro de cada comuna del Gran Santiago. Este cuantifica cuán heterogénea es la composición interna de cada comuna respecto a los grupos de clustyers del análisis del K-Means (cluster 1, cluster 2 y cluster 3).
+
+```{r índice de shannon, echo=TRUE, message=FALSE, warning=FALSE}
+#Mapa variabilidad intra-comunal
+# Calcular indice de Shannon por comuna
+shannon_df <- zonas_gs_diabetes %>%
+  st_drop_geometry() %>%
+  filter(!is.na(cluster)) %>%   # asegurarse que no haya NA
+  group_by(nom_comuna, cluster) %>%
+  summarise(n = n(), .groups = "drop_last") %>%
+  mutate(p = n / sum(n),
+         H = -p * log(p)) %>%
+  summarise(shannon = sum(H), .groups = "drop")  # índice final
+
+# Crear sf comunal uniendo zonas
+sf_comunas_santiago <- zonas_gs %>%
+  group_by(nom_comuna) %>%
+  summarise(geometry = st_union(geom))
+
+sf_comunas_shannon <- sf_comunas_santiago %>%
+  left_join(shannon_df, by = "nom_comuna")
+
+ggplot(sf_comunas_shannon) +
+  geom_sf(aes(fill = shannon), color = "white", size = 0.3) +
+  scale_fill_viridis_c(option = "plasma", direction = -1,
+                       name = "Índice de Shannon") +
+  labs(
+    title = "Variabilidad Intracomunal de Clusters",
+    subtitle = "Índice de Shannon aplicado a zonas censales",
+    caption = "Fuente: Microsimulación CASEN + CENSO 2017"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5),
+    legend.position = "right"
+  )
+```
+
+Los valores del índice van del 0.0 (baja diversidad) esto quiere decir que las zonas censales de la comuna pertenecen al mismo cluster, mientras que el 0.8 (alta diversidad) muestra que varios clusters coexisten en proporciones casi similares dentro de la comuna. Esto permite evaluar si una comuna presenta una estructura territorial homogénea o heterogénea según sus condiciones socioeconómicas y de salud.
+
+El mapa resultante muestra un patrón de gradiente centro-periferia:
+
+-   Sector oriente muestra baja diversidad, zonas homogéneas de alto nivel socioeconómico.
+
+-   Sector sur poniente, baja intermedia diversidad, zonas homogéneas de mayor vulnerabilidad.
+
+-   Sector centro y bordes intermedios, mayor diversidad, zonas de transición urbana y social.
 
 ------------------------------------------------------------------------
 
