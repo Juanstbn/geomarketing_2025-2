@@ -8,6 +8,7 @@ library(dplyr)
 library(sf)
 library(ggplot2)
 library(data.table)
+library(factoextra)
 
 ## =========================================================
 ## 2) ENTRADAS
@@ -245,28 +246,48 @@ ggplot(
   )
 
 ## MAPA DE CLUSTERS - GRAN SANTIAGO
+# Obtener bounding box del mapa
 bbox = st_bbox(zonas_gs_diabetes)
 
 # Crear mapa de clusters
 mapa_clusters = ggplot() +
-  geom_sf(data = zonas_gs_diabetes, aes(fill = cluster), color = NA) +  # Zonas censales coloreadas por cluster
-  geom_sf(data = sf_comunas_santiago, fill = NA, color = "black", size = 0.3) + # Límites comunales
-  geom_sf_text(
-    data = st_centroid(sf_comunas_santiago),
-    aes(label = nom_comuna),
-    size = 2.5, fontface = "bold", color = "black"
+  geom_sf(
+    data = zonas_gs_diabetes,
+    aes(fill = cluster),
+    color = NA
+  ) +  # Zonas censales coloreadas por cluster
+  
+  # Límites comunales (usando zonas_gs, que sí existe)
+  geom_sf(
+    data = zonas_gs,
+    fill = NA,
+    color = "black",
+    size = 0.3
   ) +
+  
+  # Etiquetas comunales usando centroides de zonas_gs
+  geom_sf_text(
+    data = zonas_gs %>% group_by(nom_comuna) %>% summarise() %>% st_centroid(),
+    aes(label = nom_comuna),
+    size = 2.5,
+    fontface = "bold",
+    color = "black"
+  ) +
+  
   scale_fill_brewer(palette = "Set2", name = "Cluster") +
+  
   labs(
     title = "Distribución Espacial de Clusters de Zonas Censales",
     subtitle = "Gran Santiago - K-Means (k = 3)",
     caption = "Fuente: Microsimulación CASEN + CENSO 2017"
   ) +
+  
   coord_sf(
     xlim = c(bbox["xmin"], bbox["xmax"]),
     ylim = c(bbox["ymin"], bbox["ymax"]),
     expand = FALSE
   ) +
+  
   theme_void() +
   theme(
     plot.title = element_text(hjust = 0.5, face = "bold"),
