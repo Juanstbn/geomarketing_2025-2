@@ -1,0 +1,370 @@
+---
+title: "Índice de Viviendas con Materialidad Precaria (IVMP) vs Nivel Educacional — Provincia de San Antonio"
+author: "Juan Esteban Rodrigo Gallardo Palma"
+output: html_document
+---
+
+# 1. Introducción
+
+La provincia de San Antonio, ubicada en la Región de Valparaíso, constituye un territorio donde convergen funciones portuarias, turísticas, residenciales y rurales. Está conformada por seis comunas San Antonio, Cartagena, El Tabo, El Quisco, Algarrobo y Santo Domingo, que presentan marcadas diferencias en su grado de urbanización, consolidación habitacional y desarrollo socioeconómico.
+
+Durante las últimas décadas, la provincia ha experimentado un crecimiento urbano y poblacional heterogéneo, impulsado tanto por el aumento del área metropolitana de Valparaíso y San Antonio como por la crecida de la segunda residencia asociada al veraneo costero. Este proceso ha dado lugar a un territorio con fuertes contrastes espaciales; zonas costeras altamente urbanizadas con alta valorización del suelo, y sectores interiores con viviendas precarias, déficit de servicios básicos y menor nivel educativo.
+
+En este contexto, el análisis de la materialidad de las viviendas y del nivel educacional de la población ofrece una aproximación para comprender la vulnerabilidad socio–territorial de la provincia.
+
+El Indicador de Viviendas con Materialidad Precaria (IVMP) permite evaluar la calidad constructiva y el nivel de consolidación del hábitat, mientras que el porcentaje de personas con educación superior actúa como un intermediario del capital humano y del bienestar socioeconómico.
+
+La relación entre ambas variables infraestructura residencial y educación refleja no solo la capacidad económica de los hogares, sino también su potencial de desarrollo social y su acceso a oportunidades dentro del territorio. La combinación espacial de estos indicadores mediante análisis bivariado permite identificar patrones de desigualdad estructural, delimitar zonas críticas y apoyar la toma de decisiones en planificación territorial, inversión pública y estrategias de desarrollo local.
+
+## 1.1. Objetivo General
+
+Analizar la relación espacial entre las condiciones estructurales de las viviendas y el nivel educacional de la población en la provincia de San Antonio, mediante la construcción de un mapa bivariado que combine el Indicador de Viviendas con Materialidad Precaria (IVMP) y el porcentaje de personas con educación superior, utilizando información del Censo 2017.
+
+## 1.2. Objetivo Específicos
+
+-   Identificar las comunas con mayores niveles de precariedad habitacional de la provincia.
+
+-   Calcular y representar el porcentaje de población con educación superior.
+
+-   Visualizar los patrones espaciales resultantes a través de un mapa bivariado e interpretar con enfoque de geomarketing social y urbano.
+
+------------------------------------------------------------------------
+
+# 2. Desarrollo
+
+## 2.1. Metodología
+
+Para el desarrollo metodológico de este trabajo se utilizaron dos herramientas principales: pgAdmin y RStudio, con el objetivo de procesar, analizar y visualizar información proveniente del Censo de Población y Vivienda 2017 elaborado por el Instituto Nacional de Estadísticas (INE).
+
+El análisis se centró en la Provincia de San Antonio, perteneciente a la Región de Valparaíso, considerando como unidad de análisis la zona censal urbana y rural. Esta escala intermedia permite observar diferencias intra–provinciales entre comunas costeras e interiores, evidenciando contrastes en la consolidación del espacio habitado, la distribución del capital humano y las condiciones materiales de las viviendas.
+
+El enfoque metodológico tuvo como propósito calcular y representar indicadores socio–habitacionales relevantes desde una perspectiva territorial, orientados a caracterizar la vulnerabilidad estructural y social del hábitat provincial. Los indicadores seleccionados se construyeron a partir de:
+
+1.  **Indicador de Viviendas con Materialidad Precaria (IVMP)**:  Porcentaje de viviendas ocupadas con materiales estructurales precarios, reflejando la calidad constructiva y las condiciones habitacionales de un territorio.
+
+<!-- -->
+
+2.  **Porcentaje de mayores de 18 años con educación media completa o superior**: representa el porcentaje de personas adultas (P09 \> 18 años) que han alcanzado al menos el nivel de educación media completa o superior (P15 ≥ 7).
+
+### 2.1.1. Librerías necesarias
+
+Se inicia cargando las siguientes librerías para el posterior análisis:
+
+```{r librería, echo=TRUE, message=FALSE, warning=FALSE}
+library(DBI)
+library(RPostgres)
+library(sf)
+library(ggplot2)
+library(cowplot)
+library(biscale)
+
+```
+
+Estas librerías permiten establecer conexiones con bases de datos PostgreSQL, manejar geometrías espaciales (sf) y generar visualizaciones estadísticas y cartográficas.
+
+### 2.1.2. Conexión a la base de datos PostgresSQL
+
+Se establece una conexión con una base de datos local en PostgreSQL que contiene las tablas del Censo 2017 para la Región de Valparaíso.
+
+```{r conexión, echo=TRUE, message=FALSE, warning=FALSE}
+con <- dbConnect(
+  Postgres(),
+  dbname   = "censo_v_2017",
+  host     = "localhost",
+  port     = 5432,
+  user     = "postgres",
+  password = "postgres"
+)
+```
+
+Variables consideradas:
+
+*Respecto a vivienda*:
+
+-   P02 — Ocupación: 1 = con moradores presentes (filtro para IVMP).
+
+-   P03A — Material muros: 6 = materiales precarios (lata, cartón, plástico, etc.).
+
+-   P03B — Material techo: 6 = materiales precarios, 7 = sin cubierta sólida.
+
+-   P03C — Material piso: 4 = capa de cemento sobre tierra, 5 = tierra.
+
+*Ámbito personas:*
+
+-   P09 — Edad (en años). Aquí se considera población adulta: P09 \> 18.
+
+-   P15 — Nivel educacional alcanzado. Se usa P15 ≥ 7 = educación media completa o superior.
+
+La consulta SQL genera la siguiente tabla con los indicadores y datos por zona censal.
+
+| Variable | Descripción |
+|------------------------------------|------------------------------------|
+| geocodigo | Código único de identificación de la zona censal. |
+| nom_comuna | Nombre de la comuna en la cual se encuentra cada zona censal. |
+| ivmp | Porcentaje de viviendas ocupadas (P02=1) que presentan materialidad precaria en muros (P03A=6), techo (P03B IN (6,7)) o piso (P03C IN (4,5)). Refleja condiciones de vulnerabilidad habitacional. |
+| edu_alta | Porcentaje de personas mayores de 18 años (P09\>18) que han alcanzado educación media completa o superior (P15≥7). Representa el nivel educativo promedio de la zona. |
+
+```{r CONSULTA SQL: IVMP Y NIVEL EDUCACIONAL (MAYORES DE 18 AÑOS), echo=TRUE, message=FALSE, warning=FALSE}
+
+sql_indicadores <- "
+WITH agg AS (
+  SELECT
+    z.geocodigo::double precision AS geocodigo,
+    c.nom_comuna,
+
+    -- IVMP: % viviendas con materialidad precaria (muros OR techo OR piso)
+    COALESCE(ROUND(
+      COUNT(*) FILTER (
+        WHERE v.p02 = 1 AND (
+          v.p03a = 6 OR          -- muros: materiales precarios
+          v.p03b IN (6,7) OR     -- techo: precarios o sin cubierta sólida
+          v.p03c IN (4,5)        -- piso: capa de cemento sobre tierra / tierra
+        )
+      ) * 100.0 /
+      NULLIF(COUNT(*) FILTER (WHERE v.p02 = 1), 0), 2), 0) AS ivmp,
+
+    -- % personas mayores de 18 años con P15 >= 7 (media completa o superior)
+    COALESCE(ROUND(
+      COUNT(*) FILTER (WHERE p.p09 > 18 AND p.p15 >= 7) * 100.0 /
+      NULLIF(COUNT(*) FILTER (WHERE p.p09 > 18), 0), 2), 0) AS edu_alta
+
+  FROM public.personas   AS p
+  JOIN public.hogares    AS h  ON p.hogar_ref_id    = h.hogar_ref_id
+  JOIN public.viviendas  AS v  ON h.vivienda_ref_id = v.vivienda_ref_id
+  JOIN public.zonas      AS z  ON v.zonaloc_ref_id  = z.zonaloc_ref_id
+  JOIN public.comunas    AS c  ON z.codigo_comuna   = c.codigo_comuna
+  JOIN public.provincias AS pr ON pr.provincia_ref_id = c.provincia_ref_id
+  WHERE pr.nom_provincia = 'SAN ANTONIO'
+  GROUP BY z.geocodigo, c.nom_comuna
+)
+SELECT
+  geocodigo,
+  nom_comuna,
+  ivmp,
+  edu_alta
+FROM agg
+ORDER BY ivmp DESC;
+"
+
+df_indicadores <- dbGetQuery(con, sql_indicadores)
+```
+
+Se extrae ademas la geometría que corresponde a las zonas urbanas de la Provincia de San Antonio desde la tabla dpa.zonas_censales_v. se seleccionan tanto urbano como rural.
+
+```{r GEOMETRÍA DE ZONAS CENSALES (PROVINCIA SAN ANTONIO), echo=TRUE, message=FALSE, warning=FALSE}
+sql_geometria <- "
+SELECT
+  geocodigo::double precision AS geocodigo,
+  geom
+FROM dpa.zonas_censales_v
+WHERE nom_provin = 'SAN ANTONIO';
+"
+sf_zonas <- st_read(con, query = sql_geometria, quiet = TRUE)
+```
+
+Luego se integra los datos censales que fueron procesados con la geometría espacial, generando una tabla espacial final lista para su visualización en siguientes procesos.
+
+```{r COMBINAR DATOS TABULARES Y ESPACIALES, echo=TRUE, message=FALSE, warning=FALSE}
+sf_mapa <- merge(x = sf_zonas, y = df_indicadores, by = 'geocodigo', all.x = FALSE)
+```
+
+### 2.1.3. Indicadores
+
+El análisis se centró en dos indicadores principales, que son capaces de representar condiciones estructurales del hábitat y dimensiones socioeducativas de la población:
+
+1.  Indicador de Viviendas con Materialidad Precaria (IVMP):
+
+    Evalúa la proporción de viviendas ocupadas que presentan deficiencias en sus materiales constructivos muros, techumbre y pisos, asociados a condiciones de pobreza material y exposición a riesgos ambientales.
+
+$$
+\text{IVMP} = \left( \frac{\text{Num viviendas con material precario}}{\text{Total de viviendas}} \right) \times 100\
+$$
+
+2.  Porcentaje de población con educación superior (edu_alta):
+
+    Representa el porcentaje de personas de 15 años o más que han alcanzado educación técnica o universitaria (p15 \> 7), lo cual actúa como indicador del capital humano y el nivel socioeconómico de la población.
+
+    $$
+    \text{edu_alta} = \left( \frac{\text{Personas con educación superior}}{\text{Población total}} \right) \times 100\
+    $$
+
+### 2.1.4. Visualización
+
+La visualización se estructuró en tres etapas:
+
+1.  **Mapas univariados**: Se generaron mapas temáticos independientes para cada indicador (IVMP y % de educación superior), con el fin de identificar la distribución espacial y los valores extremos dentro de la provincia.
+2.  **Gráfico de dispersión**: Entre IVMP y educación superior, junto al cálculo del coeficiente de correlación, para cuantificar la relación lineal entre ambas variables y complementar la interpretación espacial.
+3.  **Mapa Bivariado**: Se combinó la información de ambos indicadores en un mapa bivariado de tres clases por variable (3x3). La clasificación “quantile” permitió dividir los valores en terciles (bajo, medio, alto), facilitando la comparación visual. El resultado permite observar zonas donde coinciden alta precariedad y baja educación, así como aquellas con alta consolidación y mayor capital educativo.
+
+------------------------------------------------------------------------
+
+## 2.2. Resultados y análisis
+
+Este mapa muestra la distribución espacial del índice de viviendas con materialidad precaria (IVMP).
+
+```{r IVMP  Materialidad precaria de la vivienda, echo=TRUE, message=FALSE, warning=FALSE}
+map_ivmp <- ggplot(sf_mapa) +
+  geom_sf(aes(fill = ivmp), color = 'gray85', size = 0.2) +
+  scale_fill_distiller(palette = 'Reds', direction = 1) +
+  labs(title = 'IVMP (%) — Materialidad precaria de la vivienda',
+       fill  = 'IVMP (%)') +
+  theme_minimal()
+print(map_ivmp)
+```
+
+Los **tonos rojos** más intensos identifican las zonas donde existe mayor proporción de **viviendas con muros, techos o pisos de materiales inadecuados**, como cartón, plásticos o tierra.
+
+Las **zonas más afectadas** se ubican en el interior de San Antonio, El Tabo y el límite sur de la provincia, donde se observan concentraciones superiores al 40–60 % de viviendas precarias.
+
+En contraste, comunas como Santo Domingo, Algarrobo y Cartagena presentan los **niveles más bajos** de precariedad (\<10 %), lo que refleja mejor infraestructura habitacional y urbanización consolidada.
+
+En resumen, se evidencia un patrón territorial desigual: los sectores costeros y urbanos muestran mejores condiciones materiales, mientras que las áreas interiores y rurales concentran vulnerabilidad estructural. Esto responde a diferencias en ingresos, acceso a servicios urbanos y calidad de materiales de construcción.
+
+El mapa educativo evidencia el porcentaje de adultos con al menos enseñanza media completa o superior.
+
+```{r Educación ≥ media completa   Población mayor de 18 años, echo=TRUE, message=FALSE, warning=FALSE}
+map_edu <- ggplot(sf_mapa) +
+  geom_sf(aes(fill = edu_alta), color = 'gray85', size = 0.2) +
+  scale_fill_distiller(palette = 'Blues', direction = 1) +
+  labs(title = 'Educación ≥ media completa (%) — Población >18 años',
+       fill  = '% Educación') +
+  theme_minimal()
+print(map_edu)
+```
+
+El patrón espacial es inverso al del IVMP:
+
+Los valores más altos (70–90 %) se concentran en Santo Domingo, Cartagena y Algarrobo, zonas urbanas o turísticas donde el acceso educativo y el nivel socioeconómico son más altos.
+
+Las comunas interiores de San Antonio, El Tabo y El Quisco presentan los porcentajes más bajos (40–50 %), indicando menor capital humano y probablemente menor acceso a centros de educación media o superior.
+
+En resumen, se evidencia una brecha entre costa e interior. Las zonas con más desarrollo económico y urbano muestran mejor formación educativa, lo que repercute directamente en la calidad de vida y oportunidad laboral.
+
+El gráfico de dispersión permite visualizar la relación estadística entre precariedad habitacional y educación a nivel de zona censal.
+
+```{r Dispersión: IVMP vs Educación ≥ media, echo=TRUE, message=FALSE, warning=FALSE}
+mediana_ivmp <- median(sf_mapa$ivmp, na.rm = TRUE)
+mediana_edu  <- median(sf_mapa$edu_alta, na.rm = TRUE)
+
+sf_mapa$cuadrante <- with(sf_mapa, ifelse(
+  ivmp >= mediana_ivmp & edu_alta >= mediana_edu, 'Q1: IVMP alto / Edu alta',
+  ifelse(ivmp >= mediana_ivmp & edu_alta <  mediana_edu, 'Q2: IVMP alto / Edu baja',
+         ifelse(ivmp <  mediana_ivmp & edu_alta <  mediana_edu, 'Q3: IVMP bajo / Edu baja',
+                'Q4: IVMP bajo / Edu alta'))))
+
+colores_cuadrantes <- c(
+  'Q1: IVMP alto / Edu alta' = '#08519c',
+  'Q2: IVMP alto / Edu baja' = '#6baed6',
+  'Q3: IVMP bajo / Edu baja' = '#eff3ff',
+  'Q4: IVMP bajo / Edu alta' = '#bdd7e7'
+)
+
+grafico_cuadrantes <- ggplot(sf_mapa, aes(x = ivmp, y = edu_alta, color = cuadrante)) +
+  geom_point(size = 2) +
+  geom_vline(xintercept = mediana_ivmp, linetype = 'dashed') +
+  geom_hline(yintercept = mediana_edu,  linetype = 'dashed') +
+  scale_color_manual(values = colores_cuadrantes) +
+  labs(x = 'IVMP (%)',
+       y = 'Educación ≥ media (%) (Población >18)',
+       title = 'Dispersión: IVMP vs Educación (zonas censales, Prov. San Antonio)') +
+  theme_minimal()
+
+print(grafico_cuadrantes)
+```
+
+La mayoría de los puntos se concentran en IVMP bajos (0–10 %), con amplia variabilidad educativa (40–90 %).
+
+La tendencia general indica que a medida que aumenta el nivel educacional, disminuye el IVMP, lo que sugiere una relación inversa entre ambas variables.
+
+Los cuadrantes muestran que:
+
+-   Q1 (IVMP alto / Edu alta) son casos aislados, posiblemente zonas heterogéneas con sectores mixtos.
+
+-   Q2 (IVMP alto / Edu baja) representa las áreas de mayor vulnerabilidad social y estructural.
+
+-   Q3 (IVMP bajo / Edu baja) podrían corresponder a zonas rurales consolidadas pero con baja escolaridad.
+
+-   Q4 (IVMP bajo / Edu alta) agrupa las zonas más consolidadas socioeconómicamente, principalmente en la franja costera.
+
+El gráfico refuerza el patrón observado en los mapas: la educación actúa como un factor protector frente a la precariedad habitacional. Las zonas con más adultos escolarizados tienden a presentar mejores condiciones materiales en la vivienda.
+
+El mapa bivariado sintetiza espacialmente la relación conjunta entre educación y materialidad.
+
+```{r Mapa Bivariado: IVMP vs Educación ≥ media (Población >18 años), echo=TRUE, message=FALSE, warning=FALSE}
+sf_mapa_bi <- bi_class(
+  sf_mapa,
+  x = ivmp,
+  y = edu_alta,
+  dim = 3,
+  style = 'jenks'
+)
+
+sql_comunas <- "
+SELECT nom_comuna, geom
+FROM dpa.comunas_v
+WHERE nom_provin = 'SAN ANTONIO';
+"
+sf_comunas_sa <- st_read(con, query = sql_comunas, quiet = TRUE)
+
+# CRS proyectado para evitar advertencias al generar centroides
+crs_mapa <- st_crs(sf_mapa_bi)
+sf_comunas_proj <- st_transform(sf_comunas_sa, 32719)
+sf_centroides_proj <- st_point_on_surface(sf_comunas_proj)
+sf_centroides <- st_transform(sf_centroides_proj, crs_mapa)
+
+caja <- st_bbox(sf_mapa_bi)
+
+mapa_bivariado_etiquetas <- ggplot() +
+  geom_sf(data = sf_mapa_bi, aes(fill = bi_class), color = NA) +
+  geom_sf(data = sf_comunas_sa, fill = NA, color = 'black', size = 0.3) +
+  geom_sf_text(data = sf_centroides, aes(label = nom_comuna), size = 2.2, fontface = 'bold') +
+  bi_scale_fill(pal = 'DkBlue', dim = 3) +
+  labs(title = 'Mapa bivariado: IVMP vs Educación ≥ media (Población >18 años)',
+       subtitle = 'Provincia de San Antonio') +
+  coord_sf(xlim = c(caja['xmin'], caja['xmax']),
+           ylim = c(caja['ymin'], caja['ymax']),
+           expand = FALSE) +
+  theme_void() +
+  theme(plot.title = element_text(hjust = 0.5, face = 'bold'))
+
+leyenda_bivariada <- bi_legend(
+  pal = 'DkBlue', dim = 3,
+  xlab = 'IVMP (bajo → alto)',
+  ylab = 'Educación ≥ media (bajo → alto)',
+  size = 8
+)
+
+mapa_final <- ggdraw() +
+  draw_plot(mapa_bivariado_etiquetas, x = 0, y = 0, width = 1, height = 1) +
+  draw_plot(leyenda_bivariada, x = 0.7, y = 0.05, width = 0.25, height = 0.25)
+
+print(mapa_final)
+```
+
+Los tonos violetas (1–3) representan zonas con alta precariedad y baja educación, concentradas en sectores interiores y periurbanos de San Antonio y El Tabo.
+
+Los tonos celestes (3–1) corresponden a áreas con baja precariedad y alta educación, predominantes en Santo Domingo, Cartagena y parte de Algarrobo.
+
+Los tonos intermedios (2–2, 2–1) indican transiciones territoriales, donde la precariedad disminuye gradualmente a medida que mejora el nivel educacional.}
+
+El mapa bivariado deja en evidencia un gradiente socio-espacial costero-interior:
+
+-   Costa (celeste): alta educación, viviendas consolidadas.
+
+-   Interior (violeta): baja educación, viviendas precarias.
+
+Este patrón refleja cómo el desarrollo urbano, el turismo y la accesibilidad a servicios se concentran en la franja costera, mientras los sectores interiores mantienen rezagos estructurales.
+
+------------------------------------------------------------------------
+
+# 3. Conclusión
+
+El análisis geoespacial desarrollado permitió identificar y caracterizar los patrones territoriales asociados a la vulnerabilidad habitacional (medida mediante el IVMP) y al nivel educativo de la población adulta (P09 \> 18 años) en la provincia de San Antonio, a partir del procesamiento y visualización de los microdatos del Censo 2017.
+
+Los resultados evidencian una relación inversa significativa entre ambas variables, donde las zonas censales con mayor materialidad precaria de la vivienda tienden a presentar menores niveles de educación media o superior. Este comportamiento refleja una segregación socioespacial estructural, donde las condiciones materiales de la vivienda se correlacionan con el capital educativo y, por extensión, con el acceso a oportunidades económicas y sociales.
+
+A nivel territorial, se observa un gradiente espacial. Las comunas del norte (Algarrobo y El Quisco) y del extremo sur (Santo Domingo) muestran valores de bajo IVMP y alta educación, indicadores de consolidación urbana y mejor dotación de infraestructura. En contraste, el núcleo urbano de San Antonio y sectores interiores de El Tabo y Cartagena presentan mayores niveles de precariedad habitacional y menor escolaridad, sugiriendo concentración de vulnerabilidad estructural y social.
+
+En síntesis, el estudio corrobora que la educación y la calidad habitacional son dimensiones interdependientes del desarrollo territorial. La integración de ambas en un marco de análisis geoespacial ofrece una herramienta robusta para la identificación de zonas críticas, la priorización de intervenciones y la optimización de estrategias de inversión social y territorial.
+
+------------------------------------------------------------------------

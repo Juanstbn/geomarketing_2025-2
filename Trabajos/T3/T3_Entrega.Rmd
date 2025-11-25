@@ -1,0 +1,497 @@
+---
+title: "Agrupamineto de zonas censales con la Prevalencia de Diabetes en el Gran Santiago utilizando K-Means"
+author: "Juan Esteban Rodrigo Gallardo Palma"
+output: html_document
+---
+
+------------------------------------------------------------------------
+
+# 1. Introducción
+
+El análisis territorial basado en datos permite identificar patrones espaciales relevantes para comprender fenómenos sociales, económicos y de salud pública. En este contexto, los métodos de agrupamiento, en particular el algoritmo K-Means, se ha convertido en herramientas ampliamente utilizadas para clasificar unidades espaciales según sus similitudes internas y diferencias respecto a otros grupos. Su capacidad para reducir la complejidad multidimensional de los datos y generar tipologías territoriales interpretables resulta bastante útil en estudios urbanos y regionales. El presente trabajo aplica esta metodología para la agrupación de zonas censales del Gran Santiago, utilizando como variables de caracterización la prevalencia microsimulada de diabetes, visto anteriormente en el trabajo 2, esta vez se incorporan además el nivel educativo y el ingreso promedio estimado para cada zona. Aunque la prevalencia de diabetes es la variable de referencia, el enfoque principal de este estudio es en la aplicación del método K-Means como técnica de análisis multivariable y segmentación espacial, permitiendo identificar perfiles territoriales con características socioeconómicas diferenciadas. Para ello, se sigue integrando datos de la encuesta CASEN y del Censo 2017 mediante un proceso de microsimulación espacial, lo que permite desagregar variables de interés a nivel de zona censal unidad fundamental de análisis urbano. Posteriormente, se seleccionan variables socioeconómicas relevantes y se aplican procedimientos de normalización y análisis de conglomerados. Finalmente, los resultados se visualizan mediante gráficos bivariados y mapas territoriales que permiten interpretar la distribución espacial de los grupos generados. Este enfoque metodológico no solo permite estudiar la distribución territorial de un indicador de salud, sino también mostrar cómo técnicas pueden aplicarse en el contexto de la planificación urbana y la gestión territorial para identificar desigualdades, patrones de vulnerabilidad y áreas prioritarias de intervención.
+
+## 1.1 Objetivo General
+
+Identificar y caracterizar grupos de zonas censales del Gran Santiago mediante técnicas de análisis de conglomerados (K-Means), utilizando variables socioeconómicas y de salud estimadas a través de microsimulación espacial, con el fin de reconocer patrones territoriales diferenciados que contribuyan a la comprensión de las desigualdades urbanas.
+
+## 1.2 Objetivo Específicos
+
+-   Seleccionar y estandarizar las variables relevantes para el análisis de conglomerados, incorporando indicadores socioeconómicos y sanitarios representativos de las zonas censales.
+
+-   Implementar el algoritmo de K-Means para clasificar las zonas censales del Gran Santiago en grupos homogéneos según sus características socioeconómicas y de salud.
+
+-   Visualizar los resultados del agrupamiento mediante gráficos bivariados y mapas temáticos que permitan interpretar territorialmente la distribución y composición de los clusters.
+
+-   Analizar e interpretar los perfiles de cada cluster, identificando diferencias en términos de ingreso, nivel educativo y prevalencia de diabetes, y plantear sus implicancias en el contexto urbano y social del Gran Santiago.
+
+# 2. Desarrollo
+
+## 2.1 Metodología
+
+La metodología de este estudio se estructura primero tomando lo obtenido de la microsimulacion espacial, del trabajo anterior, específicamente el indicador de prevalencia de diabetes, este mismo ahora se incorporan indicadores como el ingreso promedio y los años de escolaridad, permitiendo desagregar la información más allá de la escala comunal disponible en CASEN. Estos resultados fueron integrados con las geometrías censales dentro de una base de datos para su posterior análisis territorial. Una vez construidos los indicadores, se seleccionaron las variables de interés y se normalizaron con el propósito de aplicar el algoritmo de K-Means, el cual permite detectar patrones y clasificar las zonas censales en grupos homogéneos según su similitud multivariada. El número de clusters se determinó utilizando el método del codo, asegurando un equilibrio entre simplicidad y capacidad explicativa. Finalmente, se desarrollaron visualizaciones que incluyen gráficos y mapas temáticos, facilitando la interpretación territorial de los grupos identificados y permitiendo analizar las relaciones entre prevalencia de diabetes, nivel educativo e ingreso promedio en el contexto urbano del Gran Santiago.
+
+### 2.1.1 Librerías necesarias
+
+Se inicia cargando las siguientes librerías para el posterior análisis:
+
+```{r Librerias, echo=TRUE, message=FALSE, warning=FALSE}
+## =========================================================
+## 1) LIBRERÍAS
+## =========================================================
+library(rakeR)
+library(RPostgres)
+library(DBI)
+library(dplyr)
+library(sf)
+library(ggplot2)
+library(data.table)
+library(factoextra)
+```
+
+### 2.1.2 Microsimulación de datos "prevalencia de diabetes"
+
+En este bloque se hace el paso completo de la microsimulación, debido a complicaciones al momento de inicialmente intentar trabajar con el resultante, por ende se opto por el camino largo y realizarlo desde un principio para obtener el indicador a trabajar que es la prevalencia de la diabetes.
+
+```{r Indicador Prevalencia diabetes, echo=TRUE, message=FALSE, warning=FALSE}
+## =========================================================
+## 2) ENTRADAS
+## =========================================================
+ruta_casen = "../../data/casen_rm.rds"
+ruta_censo = "../../data/cons_censo_df.rds"
+
+casen_raw = readRDS(ruta_casen)
+cons_censo_df = readRDS(ruta_censo)
+
+## =========================================================
+## 3) PRE-PROCESAMIENTO
+## =========================================================
+
+### 3.1 CENSO ###
+col_cons = sort(setdiff(names(cons_censo_df), c("GEOCODIGO", "COMUNA")))
+
+# Niveles
+age_levels  = grep("^edad", col_cons, value = TRUE)
+sexo_levels = grep("^sexo", col_cons, value = TRUE)
+
+### 3.2 CASEN ###
+vars_base = c("estrato", "edad", "sexo", "s28", "esc", "ypc") 
+casen = casen_raw[, vars_base, drop = FALSE]
+rm(casen_raw)
+
+# Identificar comuna
+casen$Comuna = substr(as.character(casen$estrato), 1, 5)
+casen$estrato = NULL
+
+# Transformar tipos
+casen$edad = as.integer(unclass(casen$edad))
+casen$sexo = as.integer(unclass(casen$sexo))
+casen$s28  = as.integer(unclass(casen$s28))
+casen$esc  = as.integer(unclass(casen$esc))
+casen$ypc  = as.numeric(unclass(casen$ypc))
+
+## --- Variable DIABETES (microsimulación objetivo) ---
+casen <- casen %>%
+  mutate(
+    diabetes = case_when(
+      s28 == 3 ~ 1,        # Diabetes
+      s28 > 1  ~ 0,        # Otros tratamientos
+      s28 == -88 ~ NA_real_
+    )
+  )
+
+casen <- casen %>% filter(!is.na(diabetes))
+casen$ID = as.character(seq_len(nrow(casen)))
+
+## --- Categorización de edad ---
+casen$edad_cat = cut(
+  casen$edad,
+  breaks = c(0,30,40,50,60,70,80,Inf),
+  labels = age_levels,
+  right = FALSE, include.lowest = TRUE
+)
+
+## --- Recodificación de sexo ---
+casen$sexo_cat = factor(
+  ifelse(casen$sexo == 2, sexo_levels[1],
+         ifelse(casen$sexo == 1, sexo_levels[2], NA)),
+  levels = sexo_levels
+)
+
+## =========================================================
+## 4) MICROSIMULACIÓN ESPACIAL
+## =========================================================
+cons_censo_comunas = split(cons_censo_df, cons_censo_df$COMUNA)
+inds_list = split(casen, casen$Comuna)
+
+sim_list = lapply(names(cons_censo_comunas), function(zona) {
+  cons_i = cons_censo_comunas[[zona]]
+  cons_i <- cons_i[, !grepl("^esco", names(cons_i)), drop = FALSE]
+  col_order = sort(setdiff(names(cons_i), c("COMUNA","GEOCODIGO")))
+  cons_i = cons_i[, c("GEOCODIGO", col_order), drop = FALSE]
+  
+  tmp = inds_list[[zona]]
+  inds_i = tmp[, c("ID","edad_cat","sexo_cat"), drop = FALSE]
+  names(inds_i) = c("ID","Edad","Sexo")
+  
+  w_frac = weight(cons = cons_i, inds = inds_i, vars = c("Edad","Sexo"))
+  sim_i = integerise(weights = w_frac, inds = inds_i, seed = 123)
+  
+  merge(sim_i, tmp[, c("ID","diabetes","esc","ypc","edad")], by = "ID", all.x = TRUE)
+})
+
+sim_df = data.table::rbindlist(sim_list, idcol = "COMUNA")
+
+## =========================================================
+## 5) AGREGAR VARIABLES DE SALUD Y SOCIOECONÓMICAS POR ZONA
+## =========================================================
+
+zonas_vars = sim_df %>%
+  group_by(zone) %>%
+  summarise(
+    prev_diabetes      = mean(diabetes, na.rm = TRUE),
+    prev_diabetes_pct  = round(prev_diabetes * 100, 2),
+    promedio_escolaridad_18mas = round(mean(esc[edad >= 18], na.rm = TRUE), 2),
+    ingreso_promedio   = round(mean(ypc, na.rm = TRUE), 0)
+  ) %>%
+  rename(geocodigo = zone)
+
+```
+
+Obteniendo el indicador principal, ademas se les incorpora los otros indicadores a considerar mas adelante, que seria el de ingreso promedio y ademas de el de nivel de educación
+
+### 2.1.3 Conexión a la base de datos PostgresSQL
+
+Se establece una conexión con una base de datos local en PostgreSQL que contiene las tablas del Censo 2017 para la Región Metropolitana.
+
+```{r conexion BD, echo=TRUE, message=FALSE, warning=FALSE}
+## =========================================================
+## 6) CONEXIÓN A LA BASE DE DATOS Y ESCRITURA
+## =========================================================
+db_host = "localhost"
+db_port = 5432
+db_name = "censo_rm_clases"
+db_user = "postgres"
+db_password = "postgres"
+
+con = dbConnect(
+  Postgres(),
+  dbname   = db_name,
+  host     = db_host,
+  port     = db_port,
+  user     = db_user,
+  password = db_password
+)
+
+# Guardar tabla resumen (no espacial)
+dbWriteTable(
+  con,
+  name = DBI::SQL("output.zonas_diabetes"),
+  value = zonas_vars,
+  row.names = FALSE,
+  overwrite = TRUE
+)
+```
+
+### 2.1.4 Unión con zonas censales y exportación espacial}
+
+Se consulta la base de PostGIS para extraer las geometrías de las zonas censales del Gran Santiago, se convierte el geocódigo a formato texto, estas geometrías se unen con los indicadores, generando una capa espacial donde cada zona censal contiene la información de los indicadores. El resultado se exporta a la base para utilizarlo mas adelante.
+
+```{r zonas censales, echo=TRUE, message=FALSE, warning=FALSE}
+## =========================================================
+## 7) UNIÓN CON ZONAS CENSALES Y EXPORTACIÓN ESPACIAL
+## =========================================================
+query_gs = "
+SELECT *
+FROM dpa.zonas_censales_rm
+WHERE urbano = 1 AND (
+    nom_provin = 'SANTIAGO' OR
+    nom_comuna IN ('PUENTE ALTO', 'SAN BERNARDO')
+)"
+zonas_gs = st_read(con, query = query_gs)
+zonas_gs$geocodigo = as.character(zonas_gs$geocodigo)
+
+# Unir geometría con los resultados
+zonas_gs_diabetes = left_join(zonas_gs, zonas_vars, by = "geocodigo")
+
+# Exportar a la BD
+st_write(
+  zonas_gs_diabetes,
+  dsn = con,
+  layer = DBI::SQL("output.zc_diabetes_microsim"),
+  delete_layer = TRUE
+)
+
+```
+
+### 2.1.5 Selección de variables K-Means
+
+Se prepara la base para el análisis de agrupamineto. Se crea un identificador único territorial, se seleccionan las variables de interés, se pasan a formato numérico y se limpia eliminando las filas con valores faltantes. Finalmente las variables se escalan para evitar tamaños diferentes de columnas, para poder obtener un K-Means válido.
+
+```{r Var Kmeans, echo=TRUE, message=FALSE, warning=FALSE}
+## =========================================================
+## 8) SELECCIÓN DE VARIABLES PARA K-MEANS
+## =========================================================
+# Crear ID único
+zonas_gs_diabetes$id <- seq_len(nrow(zonas_gs_diabetes))
+
+# Crear dataframe sin geometría y solo con las columnas necesarias
+vars_clusters <- zonas_gs_diabetes %>%
+  st_drop_geometry() %>%
+  dplyr::select(id, prev_diabetes_pct, promedio_escolaridad_18mas, ingreso_promedio)
+
+# Convertir a numéricas
+vars_clusters <- vars_clusters %>%
+  mutate(across(c(prev_diabetes_pct, promedio_escolaridad_18mas, ingreso_promedio), as.numeric))
+
+# Eliminar filas con NA, guardando ID
+vars_clusters_valid <- vars_clusters %>% na.omit()
+
+# Escalar variables
+vars_scaled <- scale(vars_clusters_valid[, c("prev_diabetes_pct", "promedio_escolaridad_18mas", "ingreso_promedio")])
+
+```
+
+### 2.1.6 Análisis de agrupamiento K-Means (Método del Codo)
+
+Aquí se determina el número óptimo de clusters utilizando el método del codo y luego se aplica el algoritmo K-Means con k = 3, en la grafica se ve que se genera un “codo” claro que indica un punto de equilibrio entre complejidad del modelo y capacidad explicativa. Por esta razón se seleccionó k = 3 clusters, lo cual permite diferenciar adecuadamente tres perfiles territoriales sin sobresegmentar la información.
+
+```{r kmeans, echo=TRUE, message=FALSE, warning=FALSE}
+## =========================================================
+## 9) ANÁLISIS DE AGRUPAMIENTO (K-MEANS)
+## =========================================================
+# Método del codo
+fviz_nbclust(vars_scaled, kmeans, method = "wss") +
+  labs(title = "Método del Codo", x = "Número de Clusters (k)", y = "WSS")
+
+set.seed(123)
+km <- kmeans(vars_scaled, centers = 3, nstart = 25)
+
+# Asociar clusters al subset válido
+vars_clusters_valid$cluster <- as.factor(km$cluster)
+
+# Unir nuevamente al dataset espacial
+zonas_gs_diabetes <- zonas_gs_diabetes %>%
+  left_join(vars_clusters_valid[, c("id", "cluster")], by = "id")
+
+# Verifica que la columna exista
+table(is.na(zonas_gs_diabetes$cluster))
+```
+
+Los clusters obtenidos se asignan nuevamente a cada zona censal mediante el ID creado anteriormente. Con ello, cada zona queda clasificada según su nivel de prevalencia de diabetes, escolaridad e ingreso, lo que permite generar tipologías territoriales y comparaciones entre grupos.
+
+------------------------------------------------------------------------
+
+## 2.2 Resultados y Análisis
+
+### 2.2.1 Prevalencia de Diabetes vs Escolaridad Promedio
+
+Este gráfico muestra la relación entre la prevalencia de diabetes y el promedio de escolaridad de las personas mayores de 18 años en cada zona censal del Gran Santiago, contamos con los siguientes:
+
+```{r diabetes vs escolaridad, echo=TRUE, message=FALSE, warning=FALSE}
+## Prevalencia de Diabetes vs Escolaridad Promedio
+ggplot(zonas_gs_diabetes %>% st_drop_geometry() %>% filter(!is.na(cluster)),
+       aes(x = promedio_escolaridad_18mas, y = prev_diabetes_pct, color = cluster)) +
+  geom_point(size = 2, alpha = 0.8) +
+  labs(
+    title = "Prevalencia de Diabetes vs Escolaridad Promedio",
+    subtitle = "Agrupación por K-Means (k = 3)",
+    x = "Promedio de años de escolaridad (≥18 años)",
+    y = "Prevalencia de diabetes (%)"
+  ) +
+  scale_color_brewer(palette = "Set2", name = "Cluster") +
+  theme_minimal()
+```
+
+Patrones observados:
+
+-   Cluster 1 (verde claro): Alto nivel educativo, baja prevalencia de diabetes.
+
+-   Cluster 2 (naranjo): Bajo nivel educativo, alta prevalencia de diabetes.
+
+-   Cluster 3 (azul): Medio nivel educativo, medio prevalencia de diabetes.
+
+De forma general, se observa una relación inversa entre nivel educativo y prevalencia de diabetes (a menor nivel educativo, mayor la prevalencia de diabetes). Este patrón valida la selección de este indicador como una de las explicativas para este análisis.
+
+### 2.2.2 Prevalencia de Diabetes vs Ingreso Promedio
+
+En esta visualización se presenta la relación entre ingreso promedio según datos de la CASEN y la prevalencia de diabetes.
+
+```{r diabetes vs ingreso, echo=TRUE, message=FALSE, warning=FALSE}
+## Prevalencia de diabetes VS Ingreso promedio
+ggplot(
+  zonas_gs_diabetes %>% 
+    st_drop_geometry() %>% 
+    filter(!is.na(cluster)),
+  aes(
+    x = ingreso_promedio,
+    y = prev_diabetes_pct,
+    color = cluster
+  )
+) +
+  geom_point(size = 2, alpha = 0.8) +
+  labs(
+    title = "Prevalencia de Diabetes vs Ingreso Promedio",
+    subtitle = "Agrupación por K-Means (k = 3)",
+    x = "Ingreso promedio del hogar (CASEN)",
+    y = "Prevalencia de diabetes (%)"
+  ) +
+  scale_color_brewer(palette = "Set1", name = "Cluster") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+
+```
+
+Se observan los siguientes patrones:
+
+-   Cluster 1 (rojo): Alto ingreso, baja prevalencia de diabetes
+
+-   Cluster 2 (azul): Bajo ingreso, alta prevalencia de diabetes
+
+-   Cluster 3 (verde): Bajo ingreso, Baja prevalencia de diabetes
+
+El patrón refuerza la relación socioeconómica de la enfermedad, pero si bien el ingreso promedio es una variable importante, como tal no es suficiente por sí solo para explicar la prevalencia de diabetes, por ellos, dos zonas con ingreso igualmente bajos pueden pertenecer a clusters distintos, como el caso del cluster 2 y 3. Esta heterogeneidad evidencia la importancia de combinar variables socioeconómicas.
+
+### 2.2.3 Mapa de Clusters del Gran Santiago
+
+El mapa permite observar la distribución territorial de los clusters identificados, revelando patrones espaciales coherentes con la estructura socioeconómica del Gran Santiago.
+
+```{r Mapa clsuters, echo=TRUE, message=FALSE, warning=FALSE}
+## MAPA DE CLUSTERS - GRAN SANTIAGO
+# Obtener bounding box del mapa
+bbox = st_bbox(zonas_gs_diabetes)
+
+# Crear mapa de clusters
+mapa_clusters = ggplot() +
+  geom_sf(
+    data = zonas_gs_diabetes,
+    aes(fill = cluster),
+    color = NA
+  ) +  # Zonas censales coloreadas por cluster
+  
+  # Límites comunales (usando zonas_gs, que sí existe)
+  geom_sf(
+    data = zonas_gs,
+    fill = NA,
+    color = "black",
+    size = 0.3
+  ) +
+  
+  # Etiquetas comunales usando centroides de zonas_gs
+  geom_sf_text(
+    data = zonas_gs %>% group_by(nom_comuna) %>% summarise() %>% st_centroid(),
+    aes(label = nom_comuna),
+    size = 2.5,
+    fontface = "bold",
+    color = "black"
+  ) +
+  
+  scale_fill_brewer(palette = "Set2", name = "Cluster") +
+  
+  labs(
+    title = "Distribución Espacial de Clusters de Zonas Censales",
+    subtitle = "Gran Santiago - K-Means (k = 3)",
+    caption = "Fuente: Microsimulación CASEN + CENSO 2017"
+  ) +
+  
+  coord_sf(
+    xlim = c(bbox["xmin"], bbox["xmax"]),
+    ylim = c(bbox["ymin"], bbox["ymax"]),
+    expand = FALSE
+  ) +
+  
+  theme_void() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5),
+    legend.position = "right",
+    legend.title = element_text(face = "bold")
+  )
+
+print(mapa_clusters)
+```
+
+Interpretación territorial por cluster:
+
+-   Cluster 1 (verde): Zonas de alto nivel socioeconómico
+
+Principalmete el cono de altos ingresos, zonas con mejor acceso a servicios, salud privada y estilos de vidas más saludables.
+
+-   Cluster 2 (naranjo): Zonas vulnerables con mayor prevalencia
+
+Amplias áreas del sur y poniente, menor nivel educativo, ingresos bajos, etc.
+
+-   Cluster 3 (azul): Sectores intermedios
+
+Algunas zonas de transición entre sectores altos y vulnerables, tiene indicadores socioeconómicos intermedios.
+
+El mapa de forma general muestra una segregación sanitaria asociada a la estructura socioeconómica histórica del Gran Santiago.
+
+El sector norte- oriente presenta menor prevalencia de diabetes, mientras que al sur y poniente concentran los valores más altos.
+
+### 2.2.4 Mapa variabilidad intra-comunal (índice de Shannon)
+
+El mapa muestra la distribución del índice de diversidad de Shannon que es aplicado a los clusters de las zonas censales dentro de cada comuna del Gran Santiago. Este cuantifica cuán heterogénea es la composición interna de cada comuna respecto a los grupos de clustyers del análisis del K-Means (cluster 1, cluster 2 y cluster 3).
+
+```{r índice de shannon, echo=TRUE, message=FALSE, warning=FALSE}
+#Mapa variabilidad intra-comunal
+# Calcular indice de Shannon por comuna
+shannon_df <- zonas_gs_diabetes %>%
+  st_drop_geometry() %>%
+  filter(!is.na(cluster)) %>%   # asegurarse que no haya NA
+  group_by(nom_comuna, cluster) %>%
+  summarise(n = n(), .groups = "drop_last") %>%
+  mutate(p = n / sum(n),
+         H = -p * log(p)) %>%
+  summarise(shannon = sum(H), .groups = "drop")  # índice final
+
+# Crear sf comunal uniendo zonas
+sf_comunas_santiago <- zonas_gs %>%
+  group_by(nom_comuna) %>%
+  summarise(geometry = st_union(geom))
+
+sf_comunas_shannon <- sf_comunas_santiago %>%
+  left_join(shannon_df, by = "nom_comuna")
+
+ggplot(sf_comunas_shannon) +
+  geom_sf(aes(fill = shannon), color = "white", size = 0.3) +
+  scale_fill_viridis_c(option = "plasma", direction = -1,
+                       name = "Índice de Shannon") +
+  labs(
+    title = "Variabilidad Intracomunal de Clusters",
+    subtitle = "Índice de Shannon aplicado a zonas censales",
+    caption = "Fuente: Microsimulación CASEN + CENSO 2017"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5),
+    legend.position = "right"
+  )
+```
+
+Los valores del índice van del 0.0 (baja diversidad) esto quiere decir que las zonas censales de la comuna pertenecen al mismo cluster, mientras que el 0.8 (alta diversidad) muestra que varios clusters coexisten en proporciones casi similares dentro de la comuna. Esto permite evaluar si una comuna presenta una estructura territorial homogénea o heterogénea según sus condiciones socioeconómicas y de salud.
+
+El mapa resultante muestra un patrón de gradiente centro-periferia:
+
+-   Sector oriente muestra baja diversidad, zonas homogéneas de alto nivel socioeconómico.
+
+-   Sector sur poniente, baja intermedia diversidad, zonas homogéneas de mayor vulnerabilidad.
+
+-   Sector centro y bordes intermedios, mayor diversidad, zonas de transición urbana y social.
+
+------------------------------------------------------------------------
+
+# 3. Conclusión
+
+El presente trabajo logró identificar patrones territoriales asociados a la prevalencia de diabetes en el Gran Santiago mediante la integración de microsimulación espacial y técnicas de agrupamiento. A partir de la combinación de datos provenientes del Censo 2017 y la encuesta CASEN, se estimaron indicadores a nivel de zona censal, los cuales permitieron caracterizar la heterogeneidad interna del territorio urbano. Posteriormente, la aplicación del algoritmo K-Means con tres clusters evidenció diferencias entre las zonas analizadas, tanto en escolaridad como en ingreso promedio y prevalencia de diabetes. El análisis permitió observar que la prevalencia de la enfermedad no se distribuye de manera aleatoria en la ciudad, sino que se relaciona con factores sociales y territoriales que configuran patrones diferenciados. Se identificaron zonas con altos ingresos y baja prevalencia, zonas con bajos ingresos, pero patrones de prevalencia divergentes según escolaridad, y zonas intermedias con mayor vulnerabilidad. Este comportamiento confirma que el riesgo asociado a enfermedades crónicas en este caso diabetes, no depende únicamente del nivel socioeconómico, sino que se construye a partir de la interacción entre condiciones de vida, educación, estructura etaria y características materiales del entorno urbano. Finalmente, los resultados muestran el valor de las metodologías empleadas. El agrupamiento K-Means facilitó la detección de estructuras latentes en los datos. En conjunto, estas herramientas constituyen un enfoque robusto para la caracterización territorial de problemas de salud pública y para el diseño de intervenciones focalizadas. Así, este trabajo aporta evidencia útil para la comprensión de desigualdades socioespaciales en salud dentro del Gran Santiago y demuestra el potencial analítico de integrar datos censales, encuestas de hogares y métodos estadísticos avanzados aplicados al territorio.
+
+------------------------------------------------------------------------
+
+# 4. Bibliografía
+
+-   Ministerio de Salud de Chile. Encuesta Nacional de Salud 2016-2017: Primeros resultados (Santiago, Chile). 2017.
+
+-   Revista Médica de Chile. Martorell M. et al. «Prevalencia de prediabesidad y diabesidad en Chile: resultados de la ENS 2016-2017

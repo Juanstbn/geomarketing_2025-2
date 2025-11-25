@@ -1,0 +1,356 @@
+---
+title: "Microsimulación Espacial de la Prevalencia de Diabetes en el Gran Santiago"
+author: "Juan Esteban Rodrigo Gallardo Palma"
+output: html_document
+---
+
+# 1. Introducción
+
+La diabetes es una enfermedad crónica no transmisible caracterizada por la incapacidad del organismo para regular los niveles de glucosa en sangre. En Chile, constituye una de las principales causas de morbilidad y mortalidad, vinculada directamente con estilos de vida poco saludables, envejecimiento poblacional y factores socioeconómicos. Según la Encuesta Nacional de Salud (ENS 2016-2017), cerca del 12,3 % de la población adulta chilena ha sido diagnosticada con diabetes, con una prevalencia significativamente mayor en mujeres y en los grupos socioeconómicos más vulnerables. La enfermedad también presenta un marcado componente territorial: las regiones metropolitanas y urbanas muestran prevalencias más elevadas, asociadas al sedentarismo y a la malnutrición por exceso. El desafío actual en salud pública es caracterizar territorialmente esta enfermedad para orientar políticas preventivas y de atención primaria. Por ello, la microsimulación espacial es una herramienta que permite estimar variables socioeconómicas o de salud a escalas geográficas menores, combinando encuestas representativas (como la CASEN) con información censal de alta resolución.
+
+## 1.1. Objetivo General
+
+Estimar la prevalencia espacial de diabetes en la población del Gran Santiago mediante un modelo de microsimulación basado en variables demográficas del Censo 2017 y la Encuesta CASEN 2022.
+
+## 1.2. Objetivo Específicos
+
+-   Integrar bases de datos de diferente nivel de agregación (CASEN y Censo) mediante técnicas de microsimulación espacial.
+
+-   Modelar la prevalencia de diabetes utilizando las variables edad y sexo como restricciones poblacionales.
+
+-   Representar la distribución espacial de la diabetes a nivel de zona censal en el Gran Santiago.
+
+-   Comparar las diferencias territoriales, identificando áreas con mayor prevalencia estimada.
+
+# 2. Desarrollo
+
+## 2.1. Metodología
+
+La metodología aplicada en este estudio se basa en la microsimulación espacial, una técnica que permite generar estimaciones a nivel individual o de microunidad (por ejemplo, personas o hogares) utilizando información agregada y representativa de diferentes fuentes de datos. En este caso, se integraron los registros de la Encuesta CASEN 2022 que contiene información de individuos a nivel comunal con las estructuras poblacionales del Censo 2017, agregadas a nivel de zona censal dentro del Gran Santiago. La metodología se estructura en cinco etapas principales, que combinan procedimientos de procesamiento de datos, modelamiento estadístico y visualización geoespacial.
+
+### 2.1.1. Librerías necesarias
+
+Se inicia cargando las siguientes librerías para el posterior análisis:
+
+```{r 1. Librerías, echo=TRUE, message=FALSE, warning=FALSE}
+library(rakeR)
+library(RPostgres)
+library(DBI)
+library(dplyr)
+library(sf)
+library(ggplot2)
+library(cowplot)
+library(biscale)
+
+```
+
+Cada uno cumple un rol específico dentro del flujo de trabajo: rakeR: permite realizar el procedimiento de raking o ajuste iterativo de proporciones, asegurando que las distribuciones de variables categóricas en la muestra (CASEN) coincidan con las del universo (Censo). dplyr: facilita la manipulación, filtrado y agregación de los datos, permitiendo transformar los registros individuales en estructuras adaptadas al modelo. sf: maneja datos espaciales en formato vectorial y es fundamental para generar los mapas de zonas censales con sus respectivos valores simulados. RPostgres y DBI: establecen la conexión entre R y una base de datos PostgreSQL con extensión PostGIS, donde se almacenan y visualizan los resultados espaciales. Los demás son para generar visualizaciones estadísticas y cartográficas.
+
+### 2.1.2. Entrada de datos
+
+El análisis utiliza dos fuentes complementarias: CASEN 2022 (Región Metropolitana): Permite acceder a características individuales de la población, tales como edad (edad), sexo (sexo), y condición de salud (s28), esta última asociada a enfermedades crónicas. En este caso, se selecciona la categoría 3 de la pregunta s28, correspondiente a tratamiento por diabetes. Censo 2017 (constraint poblacional): Contiene la estructura de la población por edad y sexo a nivel de zona censal, lo que permite aplicar el ajuste proporcional de la muestra CASEN para representar adecuadamente cada territorio. Ambos conjuntos se cargan como objetos .rds dentro del entorno de trabajo:
+
+```{r Entrada, echo=TRUE, message=FALSE, warning=FALSE}
+# casen en formato .rds
+
+ruta_casen = "../../data/casen_rm.rds"
+ruta_censo = "../../data/cons_censo_df.rds"
+
+casen_raw = readRDS(ruta_casen)
+cons_censo_df = readRDS(ruta_censo)
+```
+
+### 2.1.3. Pre-Procesamiento y recodificación
+
+En esta etapa se preparan todos los datos para la microsimulación, en primera instancia se ven los datos del Censo y luego los de la CASEN, para este se contruye una variable binaria "diabetes", que indicara si el individuo esta con tratamiento por esa enfermedad (1=si,0=no)
+
+```{r Pre procesamiento CASEN - Censo, echo=TRUE, message=FALSE, warning=FALSE}
+## datos CENSO
+# Extraemos los nombres de las columnas que nos son útiles
+col_cons = sort(setdiff(names(cons_censo_df), c("GEOCODIGO", "COMUNA")))
+
+
+# Generamos los niveles para edad, escolaridad y sexo
+
+age_levels = grep("^edad", col_cons, value = TRUE)
+sexo_levels = grep("^sexo", col_cons, value = TRUE)
+
+## datos CASEN 
+# ingenieria de dagtos para re codificar y obtener la variable de interes: 
+
+# Se seleccionan las variables de interés
+
+vars_base = c("estrato", # Para extraer comuna
+              "edad",
+              "sexo",
+              "s28") # s28= variable a microsimular
+
+# Se filtra la CASEN con las variables de interés
+casen = casen_raw[, vars_base, drop = FALSE]
+
+# Limpiar memoria
+# Importante para objetos muy grandes
+rm(casen_raw)
+
+# Extraemos la comuna para cada registro
+casen$Comuna = substr(as.character(casen$estrato), 1, 5)
+
+# Se elimina la columna estrato
+casen$estrato = NULL
+
+# Quitar etiquetas haven y cambiar tipo de datos
+casen$edad = as.integer(unclass(casen$edad))
+casen$sexo = as.integer(unclass(casen$sexo))
+casen$s28 = as.integer(unclass(casen$s28))
+
+
+#  Crear variable binaria de hipertensión
+casen <- casen %>%
+  mutate(
+    diabetes = case_when(
+      s28 == 3 ~ 1,        # Tratamiento por DIABETES
+      s28 > 1 ~ 0,         # Otros tratamientos médicos
+      s28 == -88 ~ NA_real_  # No responde / no aplica
+    )
+  )
+
+
+# Añadimos a un ID único
+casen$ID = as.character(seq_len(nrow(casen)))
+
+#Filtrar casos válidos
+casen <- casen %>% filter(!is.na(diabetes))
+```
+
+Se asigna también un identificador único ID a cada observación para asegurar la trazabilidad durante el proceso.
+
+Luego se realiza la recodificación de variables para que las categorías de la CASEN sean equivalentes a las del Censo.
+
+```{r Re codificación edad y sexo, echo=TRUE, message=FALSE, warning=FALSE}
+## re-codificación
+
+# Categorización de edad
+casen$edad_cat = cut(
+  casen$edad,
+  breaks = c(0,30,40,50,60,70,80,Inf),
+  labels = age_levels,
+  right = FALSE, include.lowest = TRUE
+)
+
+# Recodificación de sexo
+casen$sexo_cat = factor(
+  ifelse(casen$sexo == 2, sexo_levels[1],
+         ifelse(casen$sexo == 1, sexo_levels[2], NA)),
+  levels = sexo_levels
+)
+```
+
+### 2.1.4. Microsimulación espacial
+
+Luego se realiza la recodificación de variables para que las categorías de la CASEN La microsimulación se ejecuta a través del procedimiento de raking, que consiste en asignar pesos a los individuos de la encuesta CASEN de forma que la distribución resultante de variables categóricas (edad y sexo) coincida con las proporciones observadas en el Censo dentro de cada comuna. En términos generales, el algoritmo sigue los siguientes pasos:
+
+1.  Se divide la información censal (cons_censo_df) en subconjuntos por comuna.
+
+2.  Se hace lo mismo con la muestra CASEN.
+
+3.  Para cada comuna, se calcula una matriz de pesos (w_frac) que ajusta las distribuciones.
+
+4.  Luego, mediante integerise(), los pesos se convierten en frecuencias enteras que representan la población simulada.
+
+5.  Finalmente, se une la variable diabetes para cada individuo.
+
+```{r Recodifiación, echo=TRUE, message=FALSE, warning=FALSE}
+# crear la lista de constraints POR COMUNA
+cons_censo_comunas = split(cons_censo_df, cons_censo_df$COMUNA)
+
+# Lista de INDS 
+inds_list = split(casen, casen$Comuna)
+
+sim_list = lapply(names(cons_censo_comunas), function(zona) {
+  cons_i    = cons_censo_comunas[[zona]]
+  
+  #elimina columna esc
+  cons_i <- cons_i[, !grepl("^esco", names(cons_i)), drop = FALSE]
+  col_order = sort(setdiff(names(cons_i), c("COMUNA","GEOCODIGO")))
+  cons_i    = cons_i[, c("GEOCODIGO", col_order), drop = FALSE]
+  
+  tmp    = inds_list[[zona]]
+  inds_i = tmp[, c("ID","edad_cat","sexo_cat"), drop = FALSE]
+  names(inds_i) = c("ID","Edad","Sexo")
+  
+  
+  
+  w_frac  = weight(cons = cons_i, inds = inds_i,
+                   vars = c("Edad","Sexo"))
+  sim_i   = integerise(weights = w_frac, inds = inds_i, seed = 123)
+  merge(sim_i,
+        tmp[, c("ID","diabetes")],
+        by = "ID", all.x = TRUE)
+})
+```
+
+Luego los resultados de todas las comunas se combinan y se calcula la prevalencia media de diabetes por zona censal:
+
+```{r por zona censal, echo=TRUE, message=FALSE, warning=FALSE}
+# Data Frame de toda la población
+sim_df = data.table::rbindlist(sim_list, idcol = "COMUNA")
+
+# Se agregan los datos
+zonas_diabetes = aggregate(
+  diabetes ~ zone,
+  data = sim_df,
+  FUN = function(x) mean(x, na.rm = TRUE) 
+)
+names(zonas_diabetes) <- c("geocodigo", "prev_diabetes")
+
+# Si quieres en porcentaje: 
+zonas_diabetes$prev_diabetes_pct <- round(zonas_diabetes$prev_diabetes * 100, 2)
+```
+
+De esta forma, cada zona censal del Gran Santiago obtiene un valor estimado de prevalencia de diabetes ajustado por estructura demográfica.
+
+### 2.1.5. Conexión a la base de datos PostgresSQL
+
+Para integrar los resultados con la cartografía censal, se establece una conexión con una base PostgreSQL con extensión PostGIS, donde se almacenan las geometrías de las zonas censales urbanas del Gran Santiago.
+
+```{r conexión, echo=TRUE, message=FALSE, warning=FALSE}
+db_host = "localhost"
+db_port = 5432
+db_name = "censo_rm_clases"
+db_user = "postgres"
+db_password = "postgres"
+
+# Conexión
+con = dbConnect(
+  Postgres(),
+  dbname   = db_name,
+  host     = db_host,
+  port     = db_port,
+  user     = db_user,
+  password = db_password
+)
+```
+
+La tabla resultante (zonas_diabetes) se inserta en el esquema output, y luego se recuperan las geometrías espaciales desde la tabla dpa.zonas_censales_rm para generar los mapas de distribución:
+
+```{r tabla  en BD, echo=TRUE, message=FALSE, warning=FALSE}
+# Escribimos la tabla dentro de la BD
+
+dbWriteTable(
+  con,
+  name = DBI::SQL("output.zonas_diabete"),
+  value = zonas_diabetes,
+  row.names = FALSE
+)
+
+# Leer zonas censales a partir de la bd
+
+query_gs = "
+SELECT *
+FROM dpa.zonas_censales_rm
+WHERE urbano = 1 AND (
+    nom_provin = 'SANTIAGO' OR
+    nom_comuna IN ('PUENTE ALTO', 'SAN BERNARDO')
+)"
+
+zonas_gs = st_read(con, query = query_gs)
+
+# Se cambia el tipo de dato de la columna de geocodigo
+zonas_gs$geocodigo = as.character(zonas_gs$geocodigo)
+
+# Unir por geocódigo
+zonas_gs_diabetes = left_join(zonas_gs, zonas_diabetes, by = "geocodigo")
+```
+
+as
+
+### 2.1.6. Visualización
+
+------------------------------------------------------------------------
+
+## 2.2. Resultados y análisis
+
+El modelo de microsimulación espacial permitió estimar la prevalencia de diabetes a nivel de zona censal en el Gran Santiago, ajustando la estructura poblacional de la CASEN 2022 a las proporciones demográficas del Censo 2017 mediante las variables edad y sexo. Los resultados se representan en forma de mapas temáticos y gráficos que evidencian la heterogeneidad territorial de esta enfermedad crónica en la capital.
+
+```{r mapa, echo=TRUE, message=FALSE, warning=FALSE}
+#  Mapa temático univariado: prevalencia de diabetes
+map_diabetes <- ggplot(zonas_gs_diabetes) +
+  geom_sf(aes(fill = prev_diabetes_pct), color = "grey85", size = 0.2) +
+  scale_fill_distiller(
+    palette= "RdYlBu",
+    direction = 1,
+    na.value = "grey90",
+    name     = "% Diabetes (microsim.)"
+  ) +
+  labs(
+    title    = "Prevalencia microsimulada de diabetes",
+    subtitle = "Gran Santiago — zona censal (CASEN s28 == 3)",
+    caption  = "Fuente: CASEN RM + Censo 2017 (edad, sexo) — microsimulación con rakeR"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title   = element_text(face = "bold", hjust = 0.5),
+    plot.subtitle= element_text(hjust = 0.5)
+  )
+
+print(map_diabetes)
+```
+
+Distribución espacial de la prevalencia de diabetes La Figura 1 presenta la distribución espacial de la prevalencia microsimulada de diabetes para la población del Gran Santiago. Se observa un patrón geográfico claramente diferenciado, donde los valores más elevados de prevalencia (tonos azules) se concentran en las zonas sur y poniente de la ciudad particularmente en las comunas de San Bernardo, La Pintana, El Bosque, Lo Espejo, Cerro Navia, San Ramón, entre otras localidades. En contraste, las áreas nororiente y centro-oriente (Las Condes, Vitacura, Ñuñoa y Providencia) presentan prevalencias estimadas considerablemente más bajas, evidenciando un gradiente socioespacial típico en los indicadores de salud de la Región Metropolitana. Estos resultados son coherentes con la literatura nacional, donde la diabetes tipo 2 se asocia a condiciones de vulnerabilidad social, baja escolaridad, malnutrición por exceso y menor acceso a atención preventiva. Las zonas con menor nivel socioeconómico tienden a concentrar mayores factores de riesgo como obesidad, sedentarismo y alimentación poco saludable, lo que se traduce en una mayor carga de enfermedades metabólicas crónicas. El modelo, además, permitió identificar microzonas dentro de comunas grandes, donde existen focos locales de alta prevalencia. Esto evidencia la utilidad de la microsimulación para la planificación sanitaria territorial, ya que permite detectar desigualdades intra-comunales que suelen pasar desapercibidas en análisis a nivel municipal.
+
+```{r grafico, message=FALSE, warning=FALSE}
+# TOP 10 COMUNAS CON MAYOR PREVALENCIA
+
+# Agrupar por comuna y calcular promedio de prevalencia zonal
+top10_comunas <- zonas_gs_diabetes |>
+  st_drop_geometry() |>
+  group_by(nom_comuna) |>
+  summarise(prev_diabetes_comuna = mean(prev_diabetes_pct, na.rm = TRUE)) |>
+  arrange(desc(prev_diabetes_comuna)) |>
+  slice_head(n = 10)
+
+# Gráfico del Top 10 de comunas
+
+grafico_top10 <- ggplot(top10_comunas,
+                        aes(x = reorder(nom_comuna, prev_diabetes_comuna),
+                            y = prev_diabetes_comuna)) +
+  geom_col(fill = "#cb181d") +
+  coord_flip() +
+  labs(
+    title = "Top 10 comunas con mayor prevalencia microsimulada de diabetes",
+    subtitle = "Gran Santiago — estimación a nivel de zona censal (CASEN s28 == 3)",
+    x = "Comuna",
+    y = "% de prevalencia de diabetes"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title   = element_text(face = "bold", hjust = 0.5),
+    plot.subtitle= element_text(hjust = 0.5)
+  )
+
+print(grafico_top10)
+```
+
+La Figura 2 muestra el Top 10 de comunas con mayor prevalencia microsimulada de diabetes. El ranking es encabezado por San Ramón, Lo Espejo, Quinta Normal, Conchalí y La Pintana, todas comunas del cinturón sur y norponiente del Gran Santiago. Las prevalencias promedio estimadas superan el 7,5 %, valores que se ubican por sobre el promedio regional reportado en la Encuesta Nacional de Salud (ENS 2016-2017), que fue del 12,3 % a nivel nacional y 8–9 % en la Región Metropolitana. Estas comunas comparten características socioeconómicas similares: alta densidad poblacional, predominio de estratos socioeconómicos medios-bajos, mayor proporción de población adulta mayor, y condiciones de acceso limitado a servicios de salud preventiva. En cambio, comunas del eje oriente (Las Condes, Vitacura, La Reina) presentan valores inferiores al 3 %, lo que refuerza la existencia de una brecha estructural en salud asociada al nivel socioeconómico y a la segregación urbana.
+
+------------------------------------------------------------------------
+
+# 3. Conclusión
+
+El presente estudio demuestra la efectividad de la microsimulación espacial como herramienta metodológica para estimar la prevalencia de enfermedades crónicas, en este caso diabetes, a un nivel territorial más desagregado que el disponible en las fuentes oficiales.
+
+La integración de los microdatos de la encuesta CASEN 2022 con la estructura poblacional del Censo 2017 permitió reproducir una distribución espacial en la Región Metropolitana. Los resultados mostraron una concentración de prevalencias más altas en el sur y poniente del Gran Santiago, particularmente en comunas como San Ramón, Lo Espejo, La Pintana, Cerro Navia y Quinta Normal, mientras que las comunas del oriente y centro exhibieron valores considerablemente menores.
+
+Estos hallazgos refuerzan la existencia de un gradiente socioespacial en salud, donde las enfermedades metabólicas no transmisibles se asocian directamente a contextos de mayor vulnerabilidad social, menor nivel educativo y limitado acceso a servicios de salud preventiva. La microsimulación permitió reflejar esta relación al ajustar la distribución de edad y sexo de la encuesta a la estructura demográfica real de cada zona censal.
+
+En términos metodológicos, el modelo evidenció que la microsimulación puede ser implementada con recursos computacionales relativamente accesibles. Su aplicación representa una estrategia robusta y replicable para otras patologías o indicadores de bienestar, posibilitando la estimación de datos locales incluso en ausencia de información censal directa.
+
+Desde una perspectiva de salud pública, los resultados obtenidos son relevantes para la planificación territorial y focalización de políticas sanitarias, ya que permiten identificar microzonas urbanas con alta carga de enfermedad. Esto ofrece una base empírica sólida para orientar intervenciones preventivas, programas de control metabólico y estrategias de educación sanitaria en los sectores más afectados.
+
+Finalmente, si bien el modelo se limita a variables demográficas básicas (edad y sexo) y depende de la calidad del auto-reporte en la CASEN, constituye una aproximación válida y científica.
+
+# 4. Bibliografía
+
+-   Ministerio de Salud de Chile. Encuesta Nacional de Salud 2016-2017: Primeros resultados (Santiago, Chile). 2017.
+
+-   Revista Médica de Chile. Martorell M. et al. «Prevalencia de prediabesidad y diabesidad en Chile: resultados de la ENS 2016-2017
